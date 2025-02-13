@@ -6,7 +6,7 @@ import ReactFlow, {
   Controls,
   ConnectionLineType,
 } from 'reactflow';
-import domtoimage from 'dom-to-image-more';
+import * as htmlToImage from 'html-to-image';
 import 'reactflow/dist/style.css';
 import './App.css';
 
@@ -60,8 +60,10 @@ const nodeTypes = { simple: SimpleNode };
 function App() {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
+  const [reactFlowInstance, setReactFlowInstance] = useState(null);
   const reactFlowWrapper = useRef(null);
 
+  // Carga datos de "resultados.txt" y crea nodos y edges (ejemplo)
   useEffect(() => {
     fetch('/resultados.txt')
       .then((res) => res.text())
@@ -134,98 +136,123 @@ function App() {
       })
       .catch((error) => console.error('Error al leer el archivo:', error));
   }, []);
-  const captureFullScreenshot = () => {
-    if (reactFlowWrapper.current) {
+
+  // Función simple de espera
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // Función de filtro para html-to-image
+  function filter(node) {
+    return node.tagName !== 'I';
+  }
+
+  // Exporta TODO el diagrama a SVG (todo el alto y ancho, no solo lo visible)
+  async function exportDiagramSVG() {
+    try {
+      // Espera a que todo se renderice
+      await sleep(1000);
+
+      // Opcional: desactiva animaciones de los edges para tener un SVG "estático"
+      if (reactFlowInstance) {
+        reactFlowInstance.setEdges((eds) =>
+          eds.map((edge) => {
+            edge.animated = false;
+            edge.markerEnd = { type: 'arrow', width: 15, height: 15 };
+            return edge;
+          })
+        );
+        reactFlowInstance.fitView();
+      }
+      await sleep(1000);
+
+      // Clona el contenedor de React Flow para capturar TODO el diagrama
       const element = reactFlowWrapper.current;
-      // Clonamos el contenedor
+      if (!element) {
+        console.error('Contenedor no encontrado');
+        return;
+      }
       const clone = element.cloneNode(true);
       clone.style.overflow = 'visible';
       clone.style.position = 'absolute';
       clone.style.top = '0px';
       clone.style.left = '0px';
-      // Removemos transformaciones del viewport en el clon
-      const viewport = clone.querySelector('.react-flow__viewport');
-      if (viewport) {
-        viewport.style.transform = '';
-      }
       document.body.appendChild(clone);
-  
-      // Calculamos el bounding box de todos los nodos en el clon
+
+      // Calcula el bounding box de todos los nodos en el clon
       const nodeElements = clone.querySelectorAll('.react-flow__node');
       let minX = Infinity,
-          minY = Infinity,
-          maxX = -Infinity,
-          maxY = -Infinity;
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity;
       const cloneRect = clone.getBoundingClientRect();
-  
       nodeElements.forEach((node) => {
         const rect = node.getBoundingClientRect();
-        // Convertimos las coordenadas al sistema del clon:
         const left = rect.left - cloneRect.left;
         const top = rect.top - cloneRect.top;
         const right = left + rect.width;
         const bottom = top + rect.height;
-  
         if (left < minX) minX = left;
         if (top < minY) minY = top;
         if (right > maxX) maxX = right;
         if (bottom > maxY) maxY = bottom;
       });
-  
-      // Agregar un margen opcional
+
       const margin = 20;
       minX -= margin;
       minY -= margin;
       maxX += margin;
       maxY += margin;
-  
       const width = maxX - minX;
       const height = maxY - minY;
-  
-      // Ajustamos el clon para que tenga el tamaño del bounding box
+
+      // Ajusta el clon para que tenga el tamaño del bounding box
       clone.style.width = `${width}px`;
       clone.style.height = `${height}px`;
-  
-      // Ajustamos el viewport para trasladar los nodos y que el bounding box comience en (0,0)
+
+      // Traslada el contenido (viewport) del clon para que el bounding box empiece en (0,0)
+      const viewport = clone.querySelector('.react-flow__viewport');
       if (viewport) {
         viewport.style.transform = `translate(${-minX}px, ${-minY}px)`;
       }
-  
-      // Capturamos el clon con dom-to-image-more
-      domtoimage
-        .toPng(clone, {
-          width: width,
-          height: height,
-          style: { overflow: 'visible' },
-        })
-        .then((dataUrl) => {
-          const link = document.createElement('a');
-          link.download = 'reactflow-full-screenshot.png';
-          link.href = dataUrl;
-          link.click();
-          document.body.removeChild(clone);
-        })
-        .catch((error) => {
-          console.error('Error al capturar la imagen completa:', error);
-          document.body.removeChild(clone);
-        });
+
+      // Convierte el clon a SVG
+      const svgContent = await htmlToImage.toSvg(clone, { filter });
+      const svgElement = decodeURIComponent(
+        svgContent.replace("data:image/svg+xml;charset=utf-8,", "")
+      ).trim();
+
+      // Elimina el clon del DOM
+      document.body.removeChild(clone);
+
+      // Abre una nueva ventana y escribe solo el contenido SVG
+      const newWindow = window.open('', '_blank');
+      if (!newWindow) {
+        alert('La ventana emergente fue bloqueada. Permite pop-ups para este sitio.');
+        return;
+      }
+      newWindow.document.open();
+      newWindow.document.write(svgElement);
+      newWindow.document.close();
+    } catch (error) {
+      console.error('Error al exportar el diagrama:', error);
     }
-  };
-  
+  }
 
   return (
     <div>
-      <button onClick={captureFullScreenshot} style={{ margin: '10px' }}>
-        Capturar Screenshot Completo
+      <button onClick={exportDiagramSVG} style={{ margin: '10px' }}>
+        Exportar Diagrama a SVG
       </button>
       <div
-        className="reactflow-wrapper"
+        className="reactflow-wrapper react-flow-exporting"
         ref={reactFlowWrapper}
         style={{ width: '100%', height: '100vh' }}
       >
         <ReactFlow
           nodes={nodes}
           edges={edges}
+          onLoad={setReactFlowInstance}
           nodeTypes={nodeTypes}
           connectionLineType={ConnectionLineType.SmoothStep}
         >
