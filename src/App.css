@@ -1,0 +1,15 @@
+/* App.css */
+
+/* Aseguramos que html, body y el contenedor raíz ocupen el 100% del ancho y alto */
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* Clase para el contenedor de React Flow */
+.reactflow-wrapper {
+  width: 100vw;
+  height: 100vh;
+}
