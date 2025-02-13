@@ -63,7 +63,7 @@ function App() {
   const [reactFlowInstance, setReactFlowInstance] = useState(null);
   const reactFlowWrapper = useRef(null);
 
-  // Carga datos de "resultados.txt" y crea nodos y edges (ejemplo)
+  // Carga de datos (desde "resultados.txt")
   useEffect(() => {
     fetch('/resultados.txt')
       .then((res) => res.text())
@@ -72,7 +72,6 @@ function App() {
         const mergedLines = [];
         let currentLine = '';
         const dateStartRegex = /^\s*\d{1,2}\/\d{1,2}\/\d{2,4}/;
-
         rawLines.forEach((line) => {
           if (dateStartRegex.test(line)) {
             if (currentLine !== '') {
@@ -83,10 +82,7 @@ function App() {
             currentLine += ' ' + line.trim();
           }
         });
-        if (currentLine !== '') {
-          mergedLines.push(currentLine);
-        }
-
+        if (currentLine !== '') mergedLines.push(currentLine);
         const newNodes = [];
         const count = mergedLines.length;
         mergedLines.forEach((line, index) => {
@@ -109,7 +105,6 @@ function App() {
                 2 * Math.cos(3 * t) -
                 Math.cos(4 * t)) *
               scale;
-
             newNodes.push({
               id: `${index}`,
               type: 'simple',
@@ -120,7 +115,6 @@ function App() {
             console.log('No hace match:', line);
           }
         });
-
         const newEdges = [];
         for (let i = 0; i < newNodes.length - 1; i++) {
           newEdges.push({
@@ -137,23 +131,22 @@ function App() {
       .catch((error) => console.error('Error al leer el archivo:', error));
   }, []);
 
-  // Función simple de espera
+  // Función de espera
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  // Función de filtro para html-to-image
+  // Función de filtro (opcional) para html-to-image
   function filter(node) {
     return node.tagName !== 'I';
   }
 
-  // Exporta TODO el diagrama a SVG (todo el alto y ancho, no solo lo visible)
-  async function exportDiagramSVG() {
+  // Función que exporta el diagrama a SVG, luego convierte ese SVG a PNG y descarga ambos
+  async function exportDiagramSVGAndPNG() {
     try {
-      // Espera a que todo se renderice
+      // Espera para que todo se renderice
       await sleep(1000);
 
-      // Opcional: desactiva animaciones de los edges para tener un SVG "estático"
       if (reactFlowInstance) {
         reactFlowInstance.setEdges((eds) =>
           eds.map((edge) => {
@@ -198,6 +191,7 @@ function App() {
         if (bottom > maxY) maxY = bottom;
       });
 
+      // Agrega un margen opcional
       const margin = 20;
       minX -= margin;
       minY -= margin;
@@ -206,34 +200,51 @@ function App() {
       const width = maxX - minX;
       const height = maxY - minY;
 
-      // Ajusta el clon para que tenga el tamaño del bounding box
-      clone.style.width = `${width}px`;
-      clone.style.height = `${height}px`;
+      // Define un factor de escala para aumentar la resolución (doble la cantidad de píxeles)
+      const scaleFactor = 2;
+      const scaledWidth = width * scaleFactor;
+      const scaledHeight = height * scaleFactor;
 
-      // Traslada el contenido (viewport) del clon para que el bounding box empiece en (0,0)
+      // Ajusta el clon al tamaño escalado
+      clone.style.width = `${scaledWidth}px`;
+      clone.style.height = `${scaledHeight}px`;
+
+      // Traslada y escala el viewport del clon para que el bounding box empiece en (0,0)
       const viewport = clone.querySelector('.react-flow__viewport');
       if (viewport) {
-        viewport.style.transform = `translate(${-minX}px, ${-minY}px)`;
+        viewport.style.transform = `translate(${-minX * scaleFactor}px, ${-minY * scaleFactor}px) scale(${scaleFactor})`;
       }
 
-      // Convierte el clon a SVG
-      const svgContent = await htmlToImage.toSvg(clone, { filter });
-      const svgElement = decodeURIComponent(
-        svgContent.replace("data:image/svg+xml;charset=utf-8,", "")
-      ).trim();
+      // Genera el SVG (data URL) a partir del clon
+      const svgContent = await htmlToImage.toSvg(clone, {
+        filter,
+        width: scaledWidth,
+        height: scaledHeight,
+      });
+      const svgDataUrl = svgContent; // ya incluye el prefijo data:image/svg+xml,...
+
+      // Genera el PNG (data URL) a partir del clon, usando pixelRatio para mayor calidad
+      const pngDataUrl = await htmlToImage.toPng(clone, {
+        filter,
+        width: scaledWidth,
+        height: scaledHeight,
+        pixelRatio: scaleFactor,
+      });
 
       // Elimina el clon del DOM
       document.body.removeChild(clone);
 
-      // Abre una nueva ventana y escribe solo el contenido SVG
-      const newWindow = window.open('', '_blank');
-      if (!newWindow) {
-        alert('La ventana emergente fue bloqueada. Permite pop-ups para este sitio.');
-        return;
-      }
-      newWindow.document.open();
-      newWindow.document.write(svgElement);
-      newWindow.document.close();
+      // Descarga el SVG
+      const svgLink = document.createElement('a');
+      svgLink.download = 'diagrama.svg';
+      svgLink.href = svgDataUrl;
+      svgLink.click();
+
+      // Descarga el PNG
+      const pngLink = document.createElement('a');
+      pngLink.download = 'diagrama.png';
+      pngLink.href = pngDataUrl;
+      pngLink.click();
     } catch (error) {
       console.error('Error al exportar el diagrama:', error);
     }
@@ -241,8 +252,8 @@ function App() {
 
   return (
     <div>
-      <button onClick={exportDiagramSVG} style={{ margin: '10px' }}>
-        Exportar Diagrama a SVG
+      <button onClick={exportDiagramSVGAndPNG} style={{ margin: '10px' }}>
+        Exportar Diagrama a SVG y PNG (Descargar)
       </button>
       <div
         className="reactflow-wrapper react-flow-exporting"
