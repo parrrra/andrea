@@ -206,6 +206,9 @@ function App() {
     border: '1px solid #ccc',
   };
 
+  function filter(node) {
+    return node.tagName !== 'I';
+  }
   // Función de exportación (igual que antes)
   async function exportDiagramSVGAndPNG() {
     try {
@@ -257,35 +260,41 @@ function App() {
       maxY += margin;
       const width = maxX - minX;
       const height = maxY - minY;
+
+
+      const scaleFactor = 2;
+      const scaledWidth = width * scaleFactor;
+      const scaledHeight = height * scaleFactor;
+      // Ajusta el clon al tamaño escalado
+      clone.style.width = `${scaledWidth}px`;
+      clone.style.height = `${scaledHeight}px`;
       const viewport = clone.querySelector('.react-flow__viewport');
       if (viewport) {
-        viewport.style.transform = `translate(${-minX}px, ${-minY}px)`;
+        viewport.style.transform = `translate(${-minX * scaleFactor}px, ${-minY * scaleFactor}px) scale(${scaleFactor})`;
       }
-      const svgDataUrl = await htmlToImage.toSvg(clone, {
-        filter: (node) => node.tagName !== 'I',
-        width: width,
-        height: height,
+      const svgContent = await htmlToImage.toSvg(clone, {
+        filter,
+        width: scaledWidth,
+        height: scaledHeight,
       });
-      console.log('SVG Data URL:', svgDataUrl);
-      if (!svgDataUrl || svgDataUrl.length === 0) {
-        throw new Error('SVG Data URL vacío');
-      }
-      const scaleFactor = 5;
+      const svgDataUrl = svgContent; // ya incluye el prefijo data:image/svg+xml,...
+      // Genera el PNG (data URL) a partir del clon, usando pixelRatio para mayor calidad
       const pngDataUrl = await htmlToImage.toPng(clone, {
-        filter: (node) => node.tagName !== 'I',
-        width: width,
-        height: height,
+        filter,
+        width: scaledWidth,
+        height: scaledHeight,
         pixelRatio: scaleFactor,
       });
-      document.body.removeChild(clone);
-      const svgLink = document.createElement('a');
-      svgLink.download = 'diagrama.svg';
-      svgLink.href = svgDataUrl;
-      svgLink.click();
-      const pngLink = document.createElement('a');
-      pngLink.download = 'diagrama.png';
-      pngLink.href = pngDataUrl;
-      pngLink.click();
+
+        const svgLink = document.createElement('a');
+        svgLink.download = 'diagrama.svg';
+        svgLink.href = svgDataUrl;
+        svgLink.click();
+        const pngLink = document.createElement('a');
+        pngLink.download = 'diagrama.png';
+        pngLink.href = pngDataUrl;
+        pngLink.click();
+      
     } catch (error) {
       console.error('Error al exportar el diagrama:', error);
     }
