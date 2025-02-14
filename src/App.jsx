@@ -58,6 +58,8 @@ const SimpleNode = ({ data }) => {
 const nodeTypes = { simple: SimpleNode };
 
 function App() {
+  const [authenticated, setAuthenticated] = useState(false);
+  const [password, setPassword] = useState('');
   // Guarda todos los mensajes parseados
   const [allMessages, setAllMessages] = useState([]);
   // Nodos y aristas a mostrar
@@ -288,6 +290,76 @@ function App() {
       console.error('Error al exportar el diagrama:', error);
     }
   }
+  // Si no está autenticado, muestra la pantalla de login
+  if (!authenticated) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          height: '100vh',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontFamily: 'sans-serif',
+        }}
+      >
+        <div
+          style={{
+            border: '1px solid #ccc',
+            padding: '20px',
+            borderRadius: '8px',
+            boxShadow: '0 4px 8px rgba(0,0,0,0.1)',
+          }}
+        >
+          <h2 style={{ marginBottom: '15px' }}>Autenticación</h2>
+          <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>
+            Contraseña:
+          </label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            style={{
+              width: '200px',
+              padding: '5px',
+              borderRadius: '4px',
+              border: '1px solid #ccc',
+              marginBottom: '15px',
+            }}
+          />
+          <button
+            onClick={() => {
+              if (password === 'amor') {
+                setAuthenticated(true);
+              } else {
+                alert('Contraseña incorrecta. Pista: tiene 4 letras y se celebra hoy');
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                if (password === 'amor') {
+                  setAuthenticated(true);
+                } else {
+                  alert('Contraseña incorrecta. Pista: tiene 4 letras y se celebra hoy');
+                }
+              }
+            }}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '4px',
+              backgroundColor: '#1E90FF',
+              color: '#fff',
+              border: 'none',
+              cursor: 'pointer',
+              width: '100%',
+            }}
+          >
+            Ingresar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
 
   return (
     <div style={{ position: 'relative' }}>
