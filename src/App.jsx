@@ -90,7 +90,7 @@ function App() {
 
   // Carga y parseo de mensajes
   useEffect(() => {
-    fetch('/resultados.txt')
+    fetch(import.meta.env.BASE_URL + 'resultados.txt')
       .then((res) => res.text())
       .then((text) => {
         const rawLines = text.split('\n');
