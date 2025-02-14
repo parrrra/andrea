@@ -357,29 +357,9 @@ function App() {
                     }}
                 >
                     <h2 style={{ marginBottom: "15px" }}>Autenticación</h2>
-                    <label
-                        style={{
-                            fontWeight: "bold",
-                            marginBottom: "10px",
-                            display: "block",
-                        }}
-                    >
-                        Contraseña:
-                    </label>
-                    <input
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        style={{
-                            width: "200px",
-                            padding: "5px",
-                            borderRadius: "4px",
-                            border: "1px solid #ccc",
-                            marginBottom: "15px",
-                        }}
-                    />
-                    <button
-                        onClick={() => {
+                    <form
+                        onSubmit={(e) => {
+                            e.preventDefault();
                             if (password === "amor") {
                                 setAuthenticated(true);
                             } else {
@@ -388,29 +368,44 @@ function App() {
                                 );
                             }
                         }}
-                        onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                                if (password === "amor") {
-                                    setAuthenticated(true);
-                                } else {
-                                    alert(
-                                        "Contraseña incorrecta. Pista: tiene 4 letras y se celebra hoy"
-                                    );
-                                }
-                            }
-                        }}
-                        style={{
-                            padding: "8px 16px",
-                            borderRadius: "4px",
-                            backgroundColor: "#1E90FF",
-                            color: "#fff",
-                            border: "none",
-                            cursor: "pointer",
-                            width: "100%",
-                        }}
                     >
-                        Ingresar
-                    </button>
+                        <label
+                            style={{
+                                fontWeight: "bold",
+                                marginBottom: "10px",
+                                display: "block",
+                            }}
+                        >
+                            Contraseña:
+                        </label>
+                        <input
+                            type="password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            style={{
+                                width: "200px",
+                                padding: "5px",
+                                borderRadius: "4px",
+                                border: "1px solid #ccc",
+                                marginBottom: "15px",
+                            }}
+                            placeholder="Ingrese contraseña"
+                        />
+                        <button
+                            type="submit"
+                            style={{
+                                padding: "8px 16px",
+                                borderRadius: "4px",
+                                backgroundColor: "#1E90FF",
+                                color: "#fff",
+                                border: "none",
+                                cursor: "pointer",
+                                width: "100%",
+                            }}
+                        >
+                            Ingresar
+                        </button>
+                    </form>
                 </div>
             </div>
         );
