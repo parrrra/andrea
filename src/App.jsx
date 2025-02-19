@@ -110,7 +110,10 @@ function App() {
   const [heartMode, setHeartMode] = useState("line"); // "line" o "fill"
 
   // Estado para el gridFactor (densidad de la malla) en modo fill
-  const [gridFactor, setGridFactor] = useState(2);
+  const [gridFactor, setGridFactor] = useState(1.6);
+
+  // Estado para el overlay de exportación
+  const [exporting, setExporting] = useState(false);
 
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -245,6 +248,8 @@ function App() {
               color: msg.sender.toLowerCase().includes("andrea")
                 ? "#FF69B4"
                 : "#1E90FF",
+              width: nodeWidth,
+              height: nodeHeight,
             },
             position: {
               x: centerX + xFactor * scale - nodeWidth / 2,
@@ -321,7 +326,7 @@ function App() {
           }
         }
 
-        // Ordenar candidatos (por ejemplo, de arriba hacia abajo y de izquierda a derecha)
+        // Ordenar candidatos (de arriba hacia abajo y de izquierda a derecha)
         candidatePoints.sort((a, b) =>
           a.y === b.y ? a.x - b.x : a.y - b.y
         );
@@ -362,6 +367,8 @@ function App() {
               color: msg.sender.toLowerCase().includes("andrea")
                 ? "#FF69B4"
                 : "#1E90FF",
+              width: nodeWidth,
+              height: nodeHeight,
             },
             position: {
               x: pos.x - nodeWidth / 2,
@@ -390,6 +397,9 @@ function App() {
         const lines = formattedMessage.split("\n");
         const maxLineLength = Math.max(...lines.map((l) => l.length));
         const nodeWidth = Math.max(200, maxLineLength * 7 + 16);
+        const headerHeight = 30;
+        const messageHeight = lines.length * 20;
+        const nodeHeight = headerHeight + messageHeight + 16;
         newNodes.push({
           id: `${index}`,
           type: "simple",
@@ -399,6 +409,8 @@ function App() {
             color: msg.sender.toLowerCase().includes("andrea")
               ? "#FF69B4"
               : "#1E90FF",
+            width: nodeWidth,
+            height: nodeHeight,
           },
           position: { x: currentX, y: centerY },
         });
@@ -475,6 +487,7 @@ function App() {
 
   async function exportDiagramSVGAndPNG() {
     try {
+      setExporting(true);
       await sleep(1000);
       if (reactFlowInstance) {
         reactFlowInstance.setEdges((eds) =>
@@ -494,63 +507,61 @@ function App() {
       const element = reactFlowWrapper.current;
       if (!element) {
         console.error("Contenedor no encontrado");
+        setExporting(false);
         return;
       }
+      // Clonamos el contenedor
       const clone = element.cloneNode(true);
       clone.style.overflow = "visible";
       clone.style.position = "absolute";
       clone.style.top = "0px";
       clone.style.left = "0px";
+      // Forzamos el tamaño del clon al tamaño total del contenido (scrollWidth/scrollHeight)
       clone.style.width = `${element.scrollWidth}px`;
       clone.style.height = `${element.scrollHeight}px`;
       document.body.appendChild(clone);
-      const allElements = clone.querySelectorAll(
-        ".react-flow__node, .react-flow__edge"
-      );
-      let minX = Infinity,
-        minY = Infinity,
-        maxX = -Infinity,
-        maxY = -Infinity;
-      const cloneRect = clone.getBoundingClientRect();
-      allElements.forEach((el) => {
-        const rect = el.getBoundingClientRect();
-        const left = rect.left - cloneRect.left;
-        const top = rect.top - cloneRect.top;
-        const right = left + rect.width;
-        const bottom = top + rect.height;
-        if (left < minX) minX = left;
-        if (top < minY) minY = top;
-        if (right > maxX) maxX = right;
-        if (bottom > maxY) maxY = bottom;
+
+      // CALCULAR EL BOUNDING BOX A PARTIR DE LOS NODOS (ya que ReactFlow puede virtualizar)
+      let bb = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+      nodes.forEach((node) => {
+        const { x, y } = node.position;
+        const width = node.data.width || 200;
+        const height = node.data.height || 100;
+        bb.minX = Math.min(bb.minX, x);
+        bb.minY = Math.min(bb.minY, y);
+        bb.maxX = Math.max(bb.maxX, x + width);
+        bb.maxY = Math.max(bb.maxY, y + height);
       });
-      if (minX === Infinity) {
-        minX = 0;
-        minY = 0;
-        maxX = clone.offsetWidth;
-        maxY = clone.offsetHeight;
+      if (bb.minX === Infinity) {
+        bb = { minX: 0, minY: 0, maxX: clone.offsetWidth, maxY: clone.offsetHeight };
       }
       const margin = 20;
-      minX -= margin;
-      minY -= margin;
-      maxX += margin;
-      maxY += margin;
-      const width = maxX - minX;
-      const height = maxY - minY;
+      const clipWidth = bb.maxX - bb.minX + margin * 2;
+      const clipHeight = bb.maxY - bb.minY + margin * 2;
       const scaleFactor = 2;
-      const scaledWidth = width * scaleFactor;
-      const scaledHeight = height * scaleFactor;
+      const scaledWidth = clipWidth * scaleFactor;
+      const scaledHeight = clipHeight * scaleFactor;
+
+      // Ajustar el tamaño del clon según el área calculada
       clone.style.width = `${scaledWidth}px`;
       clone.style.height = `${scaledHeight}px`;
+
+      // Reposicionar el viewport interno para centrar el diagrama
       const viewport = clone.querySelector(".react-flow__viewport");
       if (viewport) {
-        viewport.style.transform = `translate(${-minX * scaleFactor}px, ${-minY * scaleFactor}px) scale(${scaleFactor})`;
+        viewport.style.transform = `translate(${-bb.minX * scaleFactor + margin * scaleFactor}px, ${
+          -bb.minY * scaleFactor + margin * scaleFactor
+        }px) scale(${scaleFactor})`;
       }
+
+      // Exportar a SVG
       const svgContent = await htmlToImage.toSvg(clone, {
         filter: (node) => node.tagName !== "I",
         width: scaledWidth,
         height: scaledHeight,
       });
       const svgDataUrl = svgContent;
+      // Exportar a PNG
       const pngDataUrl = await htmlToImage.toPng(clone, {
         filter: (node) => node.tagName !== "I",
         width: scaledWidth,
@@ -558,6 +569,8 @@ function App() {
         pixelRatio: scaleFactor,
       });
       document.body.removeChild(clone);
+
+      // Forzar descarga de archivos
       const svgLink = document.createElement("a");
       svgLink.download = "diagrama.svg";
       svgLink.href = svgDataUrl;
@@ -566,86 +579,36 @@ function App() {
       pngLink.download = "diagrama.png";
       pngLink.href = pngDataUrl;
       pngLink.click();
+      setExporting(false);
     } catch (error) {
       console.error("Error al exportar el diagrama:", error);
+      setExporting(false);
     }
   }
 
-  if (!authenticated) {
-    return (
-      <div
-        style={{
-          display: "flex",
-          height: "100vh",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily: "sans-serif",
-        }}
-      >
-        <div
-          style={{
-            border: "1px solid #ccc",
-            padding: "20px",
-            borderRadius: "8px",
-            boxShadow: "0 4px 8px rgba(0,0,0,0.1)",
-          }}
-        >
-          <h2 style={{ marginBottom: "15px" }}>Autenticación</h2>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (password === "amor") {
-                setAuthenticated(true);
-              } else {
-                alert(
-                  "Contraseña incorrecta. Pista: tiene 4 letras y se celebra hoy"
-                );
-              }
-            }}
-          >
-            <label
-              style={{
-                fontWeight: "bold",
-                marginBottom: "10px",
-                display: "block",
-              }}
-            >
-              Contraseña:
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={{
-                width: "200px",
-                padding: "5px",
-                borderRadius: "4px",
-                border: "1px solid #ccc",
-                marginBottom: "15px",
-              }}
-              placeholder="Ingrese contraseña"
-            />
-            <button
-              type="submit"
-              style={{
-                padding: "8px 16px",
-                borderRadius: "4px",
-                backgroundColor: "#1E90FF",
-                color: "#fff",
-                border: "none",
-                cursor: "pointer",
-                width: "100%",
-              }}
-            >
-              Ingresar
-            </button>
-          </form>
-        </div>
-      </div>
-    );
-  }
   return (
     <div style={{ position: "relative" }}>
+      {/* Overlay de exportación */}
+      {exporting && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.5)",
+            color: "#fff",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            zIndex: 2000,
+            fontSize: "24px",
+          }}
+        >
+          Generando amor...
+        </div>
+      )}
       {/* Panel de controles */}
       <div style={controlsStyle}>
         <div>
@@ -755,6 +718,7 @@ function App() {
           connectionLineType={ConnectionLineType.SmoothStep}
         >
           <Controls />
+          <Background gap={16} />
         </ReactFlow>
       </div>
     </div>
