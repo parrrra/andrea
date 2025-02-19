@@ -19,6 +19,22 @@ function formatMessage(text, limit = 80) {
   return result;
 }
 
+// Función auxiliar: determina si un punto está dentro de un polígono
+function pointInPolygon(point, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    let xi = polygon[i].x,
+      yi = polygon[i].y;
+    let xj = polygon[j].x,
+      yj = polygon[j].y;
+    let intersect =
+      yi > point.y !== yj > point.y &&
+      point.x < ((xj - xi) * (point.y - yi)) / (yj - yi + 0.000001) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
 const SimpleNode = ({ data }) => {
   return (
     <div
@@ -77,9 +93,7 @@ const nodeTypes = { simple: SimpleNode };
 function App() {
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
-  // Guarda todos los mensajes parseados (sin ordenar)
   const [allMessages, setAllMessages] = useState([]);
-  // Nodos y aristas a mostrar
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [reactFlowInstance, setReactFlowInstance] = useState(null);
@@ -88,21 +102,47 @@ function App() {
   // Parámetros configurables
   const [startIndex, setStartIndex] = useState(0);
   const [sampleSize, setSampleSize] = useState(50);
-  // Se renombra heartScale a scale para que sirva en ambos modos
   const [scale, setScale] = useState(75);
 
   // Nuevos parámetros:
   const [drawingStyle, setDrawingStyle] = useState("heart"); // "heart" o "timeline"
-  const [orderType, setOrderType] = useState("default"); // "default" (por longitud), "date" o "random"
+  const [orderType, setOrderType] = useState("default"); // "default", "date" o "random"
+  const [heartMode, setHeartMode] = useState("line"); // "line" o "fill"
 
-  // Función de espera
+  // Estado para el gridFactor (densidad de la malla) en modo fill
+  const [gridFactor, setGridFactor] = useState(2);
+
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  // Actualiza startIndex y sampleSize de forma dependiente
+  const handleStartIndexChange = (e) => {
+    const newStartIndex = Number(e.target.value);
+    const maxSampleSize = allMessages.length - newStartIndex;
+    if (sampleSize > maxSampleSize) {
+      setSampleSize(maxSampleSize);
+    }
+    setStartIndex(newStartIndex);
+  };
+
+  const handleSampleSizeChange = (e) => {
+    const newSampleSize = Number(e.target.value);
+    const maxStartIndex = allMessages.length - newSampleSize;
+    if (startIndex > maxStartIndex) {
+      setStartIndex(maxStartIndex);
+    }
+    setSampleSize(newSampleSize);
+  };
+
+  // Variables para mostrar el máximo permitido en cada slider
+  const maxStartIndex =
+    allMessages.length > 0 ? allMessages.length - sampleSize : 0;
+  const maxSampleSize =
+    allMessages.length > 0 ? allMessages.length - startIndex : 1;
+
   // Función para parsear cada línea de mensaje
   const parseLine = (line) => {
-    // Formato: "dd/mm/yy a las hh:mm - sender: message"
     const regex =
       /^\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\s+a las\s+(\d{1,2}:\d{1,2})\s+-\s+(.*?):\s+(.*?)\s*$/;
     const match = line.match(regex);
@@ -113,7 +153,6 @@ function App() {
     return null;
   };
 
-  // Función para parsear fecha y hora a objeto Date (asumiendo formato dd/mm/yy y 24h)
   const parseDateTime = (msg) => {
     const parts = msg.date.split("/");
     if (parts.length < 3) return new Date();
@@ -127,7 +166,6 @@ function App() {
     return new Date(year, month, day, hour, minute);
   };
 
-  // Carga y parseo de mensajes
   useEffect(() => {
     fetch(import.meta.env.BASE_URL + "resultados.txt")
       .then((res) => res.text())
@@ -147,7 +185,6 @@ function App() {
           }
         });
         if (currentLine !== "") mergedLines.push(currentLine);
-        // Parsea cada línea y filtra los que no hagan match
         const messages = mergedLines
           .map(parseLine)
           .filter((msg) => msg !== null);
@@ -156,71 +193,199 @@ function App() {
       .catch((error) => console.error("Error al leer el archivo:", error));
   }, []);
 
-  // Genera nodos a partir del subconjunto seleccionado (circular) y aplicando el orden y estilo de dibujo
   const generateNodes = useCallback(() => {
     if (!allMessages.length) return;
-
-    // Primero se crea una copia de allMessages y se ordena según orderType
     let sortedMessages = [...allMessages];
     if (orderType === "default") {
       sortedMessages.sort((a, b) => a.message.length - b.message.length);
     } else if (orderType === "date") {
       sortedMessages.sort((a, b) => parseDateTime(a) - parseDateTime(b));
     } else if (orderType === "random") {
-      // Shuffle con algoritmo Fisher-Yates
       for (let i = sortedMessages.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
-        [sortedMessages[i], sortedMessages[j]] = [sortedMessages[j], sortedMessages[i]];
+        [sortedMessages[i], sortedMessages[j]] = [
+          sortedMessages[j],
+          sortedMessages[i],
+        ];
       }
     }
 
-    // Ahora se seleccionan sampleSize mensajes a partir del startIndex (de forma circular)
-    let selected = [];
-    for (let i = 0; i < sampleSize; i++) {
-      const idx = (startIndex + i) % sortedMessages.length;
-      selected.push(sortedMessages[idx]);
-    }
-
+    // Seleccionamos sin wrapping para evitar repeticiones
+    const selected = sortedMessages.slice(startIndex, startIndex + sampleSize);
     const centerX = window.innerWidth / 2;
     const centerY = window.innerHeight / 2;
     let newNodes = [];
+    let newEdges = [];
 
     if (drawingStyle === "heart") {
-      // Modo heart: fórmula clásica del corazón usando scale
-      const count = selected.length;
-      newNodes = selected.map((msg, index) => {
-        const t = (index / count) * 2 * Math.PI;
-        const xFactor = 16 * Math.pow(Math.sin(t), 3);
-        const yFactor =
-          13 * Math.cos(t) -
-          5 * Math.cos(2 * t) -
-          2 * Math.cos(3 * t) -
-          Math.cos(4 * t);
-        const formattedMessage = formatMessage(msg.message, 80);
-        return {
-          id: `${index}`,
-          type: "simple",
-          data: {
-            ...msg,
-            message: formattedMessage,
-            color: msg.sender.toLowerCase().includes("andrea")
-              ? "#FF69B4"
-              : "#1E90FF",
-          },
-          position: {
-            x: centerX + xFactor * scale,
-            y: centerY - yFactor * scale,
-          },
-        };
-      });
+      if (heartMode === "line") {
+        // Modo "line": se posicionan los mensajes a lo largo del contorno
+        const count = selected.length;
+        newNodes = selected.map((msg, index) => {
+          const t = (index / count) * 2 * Math.PI;
+          const xFactor = 16 * Math.pow(Math.sin(t), 3);
+          const yFactor =
+            13 * Math.cos(t) -
+            5 * Math.cos(2 * t) -
+            2 * Math.cos(3 * t) -
+            Math.cos(4 * t);
+          const formattedMessage = formatMessage(msg.message, 80);
+          const lines = formattedMessage.split("\n");
+          const maxLineLength = Math.max(...lines.map((l) => l.length));
+          const nodeWidth = Math.max(200, maxLineLength * 7 + 16);
+          const headerHeight = 30;
+          const messageHeight = lines.length * 20;
+          const nodeHeight = headerHeight + messageHeight + 16;
+          return {
+            id: `${index}`,
+            type: "simple",
+            data: {
+              ...msg,
+              message: formattedMessage,
+              color: msg.sender.toLowerCase().includes("andrea")
+                ? "#FF69B4"
+                : "#1E90FF",
+            },
+            position: {
+              x: centerX + xFactor * scale - nodeWidth / 2,
+              y: centerY - yFactor * scale - nodeHeight / 2,
+            },
+          };
+        });
+      } else if (heartMode === "fill") {
+        // En modo "fill" queremos:
+        // 1. Colocar algunos mensajes sobre el contorno del corazón
+        // 2. Y luego distribuir el resto en el interior usando una malla (grid)
+
+        // 1. Calcular el contorno (polígono) del corazón
+        const polygon = [];
+        const samples = 100;
+        for (let i = 0; i <= samples; i++) {
+          const t = (i / samples) * 2 * Math.PI;
+          const xFactor = 16 * Math.pow(Math.sin(t), 3);
+          const yFactor =
+            13 * Math.cos(t) -
+            5 * Math.cos(2 * t) -
+            2 * Math.cos(3 * t) -
+            Math.cos(4 * t);
+          const x = centerX + xFactor * scale;
+          const y = centerY - yFactor * scale;
+          polygon.push({ x, y });
+        }
+
+        // Calcular el bounding box del contorno
+        let polyMinX = Infinity,
+          polyMinY = Infinity,
+          polyMaxX = -Infinity,
+          polyMaxY = -Infinity;
+        polygon.forEach((p) => {
+          if (p.x < polyMinX) polyMinX = p.x;
+          if (p.y < polyMinY) polyMinY = p.y;
+          if (p.x > polyMaxX) polyMaxX = p.x;
+          if (p.y > polyMaxY) polyMaxY = p.y;
+        });
+
+        const totalNodes = selected.length;
+
+        // Definir qué fracción de nodos se ubica en el contorno (por ejemplo, 30%)
+        const outlineFraction = 0.3;
+        const outlineCount = Math.min(
+          totalNodes,
+          Math.floor(totalNodes * outlineFraction)
+        );
+        const interiorCount = totalNodes - outlineCount;
+
+        // 2. Obtener posiciones a lo largo del contorno (outline)
+        const outlinePositions = [];
+        for (let i = 0; i < outlineCount; i++) {
+          // Muestreamos de forma equidistante a lo largo del array "polygon"
+          const index = Math.floor((i / outlineCount) * polygon.length);
+          outlinePositions.push(polygon[index]);
+        }
+
+        // 3. Generar la malla (grid) para el interior usando el gridFactor del estado
+        const R = Math.ceil(Math.sqrt(interiorCount) * gridFactor);
+        const C = R; // malla cuadrada
+        const cellWidth = (polyMaxX - polyMinX) / C;
+        const cellHeight = (polyMaxY - polyMinY) / R;
+
+        // Generar candidatos: centro de cada celda que esté dentro del polígono
+        const candidatePoints = [];
+        for (let i = 0; i < R; i++) {
+          for (let j = 0; j < C; j++) {
+            const x = polyMinX + (j + 0.5) * cellWidth;
+            const y = polyMinY + (i + 0.5) * cellHeight;
+            if (pointInPolygon({ x, y }, polygon)) {
+              candidatePoints.push({ x, y });
+            }
+          }
+        }
+
+        // Ordenar candidatos (por ejemplo, de arriba hacia abajo y de izquierda a derecha)
+        candidatePoints.sort((a, b) =>
+          a.y === b.y ? a.x - b.x : a.y - b.y
+        );
+
+        // Seleccionar de forma equidistante la cantidad necesaria de posiciones para el interior
+        let gridPoints = [];
+        if (candidatePoints.length >= interiorCount) {
+          const step = candidatePoints.length / interiorCount;
+          for (let i = 0; i < interiorCount; i++) {
+            gridPoints.push(candidatePoints[Math.floor(i * step)]);
+          }
+        } else {
+          gridPoints = [...candidatePoints];
+          while (gridPoints.length < interiorCount) {
+            gridPoints.push({ x: centerX, y: centerY });
+          }
+        }
+
+        // 4. Combinar las posiciones: primero las del contorno y luego las del interior
+        const finalPositions = outlinePositions.concat(gridPoints);
+
+        // 5. Asignar cada mensaje a una posición de finalPositions
+        newNodes = selected.map((msg, index) => {
+          const formattedMessage = formatMessage(msg.message, 80);
+          const lines = formattedMessage.split("\n");
+          const maxLineLength = Math.max(...lines.map((l) => l.length));
+          const nodeWidth = Math.max(200, maxLineLength * 7 + 16);
+          const headerHeight = 30;
+          const messageHeight = lines.length * 20;
+          const nodeHeight = headerHeight + messageHeight + 16;
+          const pos = finalPositions[index];
+          return {
+            id: `${index}`,
+            type: "simple",
+            data: {
+              ...msg,
+              message: formattedMessage,
+              color: msg.sender.toLowerCase().includes("andrea")
+                ? "#FF69B4"
+                : "#1E90FF",
+            },
+            position: {
+              x: pos.x - nodeWidth / 2,
+              y: pos.y - nodeHeight / 2,
+            },
+          };
+        });
+      }
+      // Conectar los nodos secuencialmente
+      for (let i = 0; i < newNodes.length - 1; i++) {
+        newEdges.push({
+          id: `e${i}-${i + 1}`,
+          source: newNodes[i].id,
+          target: newNodes[i + 1].id,
+          animated: true,
+          style: { stroke: newNodes[i].data.color, strokeWidth: 2 },
+        });
+      }
     } else if (drawingStyle === "timeline") {
-      // Modo timeline: los nodos se posicionan secuencialmente considerando el ancho del mensaje
       const timelineScale = scale / 75;
       let currentX = 50 * timelineScale;
       const margin = 50 * timelineScale;
       newNodes = [];
-      for (let index = 0; index < selected.length; index++) {
-        const msg = selected[index];
+      selected.forEach((msg, index) => {
         const formattedMessage = formatMessage(msg.message, 80);
         const lines = formattedMessage.split("\n");
         const maxLineLength = Math.max(...lines.map((l) => l.length));
@@ -238,30 +403,35 @@ function App() {
           position: { x: currentX, y: centerY },
         });
         currentX += nodeWidth + margin;
-      }
-    }
-
-    // Conectar los nodos en secuencia
-    const newEdges = [];
-    for (let i = 0; i < newNodes.length - 1; i++) {
-      newEdges.push({
-        id: `e${i}-${i + 1}`,
-        source: newNodes[i].id,
-        target: newNodes[i + 1].id,
-        animated: true,
-        style: { stroke: newNodes[i].data.color, strokeWidth: 2 },
       });
+      for (let i = 0; i < newNodes.length - 1; i++) {
+        newEdges.push({
+          id: `e${i}-${i + 1}`,
+          source: newNodes[i].id,
+          target: newNodes[i + 1].id,
+          animated: true,
+          style: { stroke: newNodes[i].data.color, strokeWidth: 2 },
+        });
+      }
     }
     setNodes(newNodes);
     setEdges(newEdges);
-  }, [allMessages, startIndex, sampleSize, scale, drawingStyle, orderType]);
+  }, [allMessages, startIndex, sampleSize, scale, drawingStyle, orderType, heartMode, gridFactor]);
 
-  // Actualiza el diagrama cada vez que cambien parámetros
   useEffect(() => {
     generateNodes();
-  }, [allMessages, startIndex, sampleSize, scale, drawingStyle, orderType, generateNodes]);
+  }, [
+    allMessages,
+    startIndex,
+    sampleSize,
+    scale,
+    drawingStyle,
+    orderType,
+    heartMode,
+    gridFactor,
+    generateNodes,
+  ]);
 
-  // Estilos del panel de controles (más pequeño)
   const controlsStyle = {
     position: "absolute",
     top: 20,
@@ -276,7 +446,7 @@ function App() {
     display: "flex",
     flexDirection: "column",
     gap: "8px",
-    width: "180px",
+    width: "250px",
   };
 
   const labelStyle = {
@@ -285,16 +455,13 @@ function App() {
     marginBottom: "3px",
   };
 
-  // Nuevo estilo para los inputs range
   const rangeInputStyle = {
     width: "100%",
     padding: "0",
     margin: "0",
     border: "none",
-
   };
 
-  // Estilo para los selects
   const selectInputStyle = {
     width: "100%",
     padding: "5px",
@@ -306,12 +473,9 @@ function App() {
     return node.tagName !== "I";
   }
 
-  // Función de exportación (igual que antes)
   async function exportDiagramSVGAndPNG() {
     try {
-      // Espera para que todo se renderice
       await sleep(1000);
-  
       if (reactFlowInstance) {
         reactFlowInstance.setEdges((eds) =>
           eds.map((edge) => {
@@ -327,8 +491,6 @@ function App() {
         reactFlowInstance.fitView();
       }
       await sleep(1000);
-  
-      // Clonar el contenedor de React Flow
       const element = reactFlowWrapper.current;
       if (!element) {
         console.error("Contenedor no encontrado");
@@ -339,12 +501,9 @@ function App() {
       clone.style.position = "absolute";
       clone.style.top = "0px";
       clone.style.left = "0px";
-      // Opcionalmente, fijar el tamaño del clon usando scrollWidth/scrollHeight
       clone.style.width = `${element.scrollWidth}px`;
       clone.style.height = `${element.scrollHeight}px`;
       document.body.appendChild(clone);
-  
-      // Calcular el bounding box de todos los elementos relevantes (nodos y bordes)
       const allElements = clone.querySelectorAll(
         ".react-flow__node, .react-flow__edge"
       );
@@ -355,7 +514,6 @@ function App() {
       const cloneRect = clone.getBoundingClientRect();
       allElements.forEach((el) => {
         const rect = el.getBoundingClientRect();
-        // Convertir coordenadas relativas al clon
         const left = rect.left - cloneRect.left;
         const top = rect.top - cloneRect.top;
         const right = left + rect.width;
@@ -365,16 +523,12 @@ function App() {
         if (right > maxX) maxX = right;
         if (bottom > maxY) maxY = bottom;
       });
-  
-      // Si no se encuentran elementos (caso borde), usar el tamaño del clon
       if (minX === Infinity) {
         minX = 0;
         minY = 0;
         maxX = clone.offsetWidth;
         maxY = clone.offsetHeight;
       }
-  
-      // Agregar un margen opcional
       const margin = 20;
       minX -= margin;
       minY -= margin;
@@ -382,50 +536,32 @@ function App() {
       maxY += margin;
       const width = maxX - minX;
       const height = maxY - minY;
-  
-      // Factor de escala para mejorar la resolución (por ejemplo, 2)
       const scaleFactor = 2;
       const scaledWidth = width * scaleFactor;
       const scaledHeight = height * scaleFactor;
-  
-      // Ajustar el clon al tamaño escalado
       clone.style.width = `${scaledWidth}px`;
       clone.style.height = `${scaledHeight}px`;
-  
-      // Trasladar y escalar el viewport del clon para que el bounding box empiece en (0,0)
       const viewport = clone.querySelector(".react-flow__viewport");
       if (viewport) {
-        viewport.style.transform = `translate(${
-          -minX * scaleFactor
-        }px, ${-minY * scaleFactor}px) scale(${scaleFactor})`;
+        viewport.style.transform = `translate(${-minX * scaleFactor}px, ${-minY * scaleFactor}px) scale(${scaleFactor})`;
       }
-  
-      // Generar el SVG (data URL) a partir del clon
       const svgContent = await htmlToImage.toSvg(clone, {
         filter: (node) => node.tagName !== "I",
         width: scaledWidth,
         height: scaledHeight,
       });
-      const svgDataUrl = svgContent; // ya incluye el prefijo data:image/svg+xml,...
-  
-      // Generar el PNG (data URL) a partir del clon, usando pixelRatio para mayor calidad
+      const svgDataUrl = svgContent;
       const pngDataUrl = await htmlToImage.toPng(clone, {
         filter: (node) => node.tagName !== "I",
         width: scaledWidth,
         height: scaledHeight,
         pixelRatio: scaleFactor,
       });
-  
-      // Eliminar el clon del DOM
       document.body.removeChild(clone);
-  
-      // Descargar el SVG
       const svgLink = document.createElement("a");
       svgLink.download = "diagrama.svg";
       svgLink.href = svgDataUrl;
       svgLink.click();
-  
-      // Descargar el PNG
       const pngLink = document.createElement("a");
       pngLink.download = "diagrama.png";
       pngLink.href = pngDataUrl;
@@ -434,105 +570,107 @@ function App() {
       console.error("Error al exportar el diagrama:", error);
     }
   }
-  
 
-  // Si no se requiere autenticación, se omite la pantalla de login
   if (!authenticated) {
     return (
+      <div
+        style={{
+          display: "flex",
+          height: "100vh",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "sans-serif",
+        }}
+      >
         <div
-            style={{
-                display: "flex",
-                height: "100vh",
-                alignItems: "center",
-                justifyContent: "center",
-                fontFamily: "sans-serif",
-            }}
+          style={{
+            border: "1px solid #ccc",
+            padding: "20px",
+            borderRadius: "8px",
+            boxShadow: "0 4px 8px rgba(0,0,0,0.1)",
+          }}
         >
-            <div
-                style={{
-                    border: "1px solid #ccc",
-                    padding: "20px",
-                    borderRadius: "8px",
-                    boxShadow: "0 4px 8px rgba(0,0,0,0.1)",
-                }}
+          <h2 style={{ marginBottom: "15px" }}>Autenticación</h2>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (password === "amor") {
+                setAuthenticated(true);
+              } else {
+                alert(
+                  "Contraseña incorrecta. Pista: tiene 4 letras y se celebra hoy"
+                );
+              }
+            }}
+          >
+            <label
+              style={{
+                fontWeight: "bold",
+                marginBottom: "10px",
+                display: "block",
+              }}
             >
-                <h2 style={{ marginBottom: "15px" }}>Autenticación</h2>
-                <form
-                    onSubmit={(e) => {
-                        e.preventDefault();
-                        if (password === "amor") {
-                            setAuthenticated(true);
-                        } else {
-                            alert(
-                                "Contraseña incorrecta. Pista: tiene 4 letras y se celebra hoy"
-                            );
-                        }
-                    }}
-                >
-                    <label
-                        style={{
-                            fontWeight: "bold",
-                            marginBottom: "10px",
-                            display: "block",
-                        }}
-                    >
-                        Contraseña:
-                    </label>
-                    <input
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        style={{
-                            width: "200px",
-                            padding: "5px",
-                            borderRadius: "4px",
-                            border: "1px solid #ccc",
-                            marginBottom: "15px",
-                        }}
-                        placeholder="Ingrese contraseña"
-                    />
-                    <button
-                        type="submit"
-                        style={{
-                            padding: "8px 16px",
-                            borderRadius: "4px",
-                            backgroundColor: "#1E90FF",
-                            color: "#fff",
-                            border: "none",
-                            cursor: "pointer",
-                            width: "100%",
-                        }}
-                    >
-                        Ingresar
-                    </button>
-                </form>
-            </div>
+              Contraseña:
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={{
+                width: "200px",
+                padding: "5px",
+                borderRadius: "4px",
+                border: "1px solid #ccc",
+                marginBottom: "15px",
+              }}
+              placeholder="Ingrese contraseña"
+            />
+            <button
+              type="submit"
+              style={{
+                padding: "8px 16px",
+                borderRadius: "4px",
+                backgroundColor: "#1E90FF",
+                color: "#fff",
+                border: "none",
+                cursor: "pointer",
+                width: "100%",
+              }}
+            >
+              Ingresar
+            </button>
+          </form>
         </div>
+      </div>
     );
-}
+  }
   return (
     <div style={{ position: "relative" }}>
       {/* Panel de controles */}
       <div style={controlsStyle}>
         <div>
-          <label style={labelStyle}>Start Index: {startIndex}</label>
+          <label style={labelStyle}>
+            Start Index: {startIndex} (Max: {maxStartIndex})
+          </label>
           <input
             type="range"
             min="0"
-            max={allMessages.length > 0 ? allMessages.length - 1 : 0}
+            max={allMessages.length > 0 ? allMessages.length - sampleSize : 0}
             value={startIndex}
-            onChange={(e) => setStartIndex(Number(e.target.value))}
+            onChange={handleStartIndexChange}
             style={rangeInputStyle}
           />
         </div>
         <div>
-          <label style={labelStyle}>Sample Size: {sampleSize}</label>
+          <label style={labelStyle}>
+            Sample Size: {sampleSize} (Max: {maxSampleSize})
+          </label>
           <input
             type="range"
             min="1"
-            max={allMessages.length > 0 ? allMessages.length : 1}
+            max={allMessages.length > 0 ? allMessages.length - startIndex : 1}
             value={sampleSize}
-            onChange={(e) => setSampleSize(Number(e.target.value))}
+            onChange={handleSampleSizeChange}
             style={rangeInputStyle}
           />
         </div>
@@ -570,6 +708,33 @@ function App() {
             <option value="random">Aleatorio</option>
           </select>
         </div>
+        {drawingStyle === "heart" && (
+          <div>
+            <label style={labelStyle}>Modo Corazón:</label>
+            <select
+              value={heartMode}
+              onChange={(e) => setHeartMode(e.target.value)}
+              style={selectInputStyle}
+            >
+              <option value="line">Line</option>
+              <option value="fill">Fill</option>
+            </select>
+          </div>
+        )}
+        {drawingStyle === "heart" && heartMode === "fill" && (
+          <div>
+            <label style={labelStyle}>Grid Factor: {gridFactor}</label>
+            <input
+              type="range"
+              min="1"
+              max="10"
+              step={0.1}
+              value={gridFactor}
+              onChange={(e) => setGridFactor(Number(e.target.value))}
+              style={rangeInputStyle}
+            />
+          </div>
+        )}
       </div>
       <button
         onClick={exportDiagramSVGAndPNG}
@@ -589,7 +754,6 @@ function App() {
           nodeTypes={nodeTypes}
           connectionLineType={ConnectionLineType.SmoothStep}
         >
-          <Background gap={16} />
           <Controls />
         </ReactFlow>
       </div>
