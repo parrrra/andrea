@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import ReactFlow, {
   Handle,
   Position,
-  Background,
   Controls,
   ConnectionLineType,
 } from "reactflow";
@@ -91,8 +90,6 @@ const SimpleNode = ({ data }) => {
 const nodeTypes = { simple: SimpleNode };
 
 function App() {
-  const [authenticated, setAuthenticated] = useState(false);
-  const [password, setPassword] = useState("");
   const [allMessages, setAllMessages] = useState([]);
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
@@ -104,20 +101,105 @@ function App() {
   const [sampleSize, setSampleSize] = useState(50);
   const [scale, setScale] = useState(75);
 
-  // Nuevos parámetros:
+  // Parámetros de visualización
   const [drawingStyle, setDrawingStyle] = useState("heart"); // "heart" o "timeline"
   const [orderType, setOrderType] = useState("default"); // "default", "date" o "random"
   const [heartMode, setHeartMode] = useState("line"); // "line" o "fill"
-
-  // Estado para el gridFactor (densidad de la malla) en modo fill
   const [gridFactor, setGridFactor] = useState(1.6);
 
-  // Estado para el overlay de exportación
+  // Overlay de exportación
   const [exporting, setExporting] = useState(false);
 
+  // Estados para el modal de carga de fichero
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [modalMessages, setModalMessages] = useState([]);
+  const [filterText, setFilterText] = useState("");
+
+  // Función para dormir (usada en exportación)
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
+
+  // Función para procesar el texto del fichero (para el fetch por defecto)
+  const processFileText = (text) => {
+    const rawLines = text.split("\n");
+    const mergedLines = [];
+    let currentLine = "";
+    const dateStartRegex = /^\s*\d{1,2}\/\d{1,2}\/\d{2,4}/;
+    rawLines.forEach((line) => {
+      if (dateStartRegex.test(line)) {
+        if (currentLine !== "") {
+          mergedLines.push(currentLine);
+        }
+        currentLine = line.trim();
+      } else {
+        currentLine += " " + line.trim();
+      }
+    });
+    if (currentLine !== "") mergedLines.push(currentLine);
+    const messages = mergedLines
+      .map(parseLine)
+      .filter((msg) => msg !== null);
+    setAllMessages(messages);
+  };
+
+  // Se carga el fichero por defecto
+  useEffect(() => {
+    fetch(import.meta.env.BASE_URL + "resultados.txt")
+      .then((res) => res.text())
+      .then((text) => {
+        processFileText(text);
+      })
+      .catch((error) => console.error("Error al leer el archivo:", error));
+  }, []);
+
+  // Función de parseo (actualizada para admitir "a las" o coma)
+  const parseLine = (line) => {
+    const regex =
+      /^\s*(\d{1,2}\/\d{1,2}\/\d{2,4})[,\s]*(?:a las\s+)?(\d{1,2}:\d{1,2})\s+-\s+(.*?):\s+(.*?)\s*$/;
+    const match = line.match(regex);
+    if (match) {
+      const [, date, time, sender, message] = match;
+      return { date, time, sender, message };
+    }
+    return null;
+  };
+
+  // Procesamiento del fichero para el modal (sin afectar el estado global hasta confirmar)
+  const processModalFileText = (text) => {
+    const rawLines = text.split("\n");
+    const mergedLines = [];
+    let currentLine = "";
+    const dateStartRegex = /^\s*\d{1,2}\/\d{1,2}\/\d{2,4}/;
+    rawLines.forEach((line) => {
+      if (dateStartRegex.test(line)) {
+        if (currentLine !== "") {
+          mergedLines.push(currentLine);
+        }
+        currentLine = line.trim();
+      } else {
+        currentLine += " " + line.trim();
+      }
+    });
+    if (currentLine !== "") mergedLines.push(currentLine);
+    const messages = mergedLines
+      .map(parseLine)
+      .filter((msg) => msg !== null);
+    setModalMessages(messages);
+  };
+
+  // Handler para el fichero dentro del modal
+  const handleModalFileUpload = (event) => {
+    if (event.target.files && event.target.files.length > 0) {
+      const file = event.target.files[0];
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target.result;
+        processModalFileText(text);
+      };
+      reader.readAsText(file);
+    }
+  };
 
   // Actualiza startIndex y sampleSize de forma dependiente
   const handleStartIndexChange = (e) => {
@@ -138,23 +220,10 @@ function App() {
     setSampleSize(newSampleSize);
   };
 
-  // Variables para mostrar el máximo permitido en cada slider
   const maxStartIndex =
     allMessages.length > 0 ? allMessages.length - sampleSize : 0;
   const maxSampleSize =
     allMessages.length > 0 ? allMessages.length - startIndex : 1;
-
-  // Función para parsear cada línea de mensaje
-  const parseLine = (line) => {
-    const regex =
-      /^\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\s+a las\s+(\d{1,2}:\d{1,2})\s+-\s+(.*?):\s+(.*?)\s*$/;
-    const match = line.match(regex);
-    if (match) {
-      const [, date, time, sender, message] = match;
-      return { date, time, sender, message };
-    }
-    return null;
-  };
 
   const parseDateTime = (msg) => {
     const parts = msg.date.split("/");
@@ -168,33 +237,6 @@ function App() {
     const [hour, minute] = msg.time.split(":").map((n) => parseInt(n, 10));
     return new Date(year, month, day, hour, minute);
   };
-
-  useEffect(() => {
-    fetch(import.meta.env.BASE_URL + "resultados.txt")
-      .then((res) => res.text())
-      .then((text) => {
-        const rawLines = text.split("\n");
-        const mergedLines = [];
-        let currentLine = "";
-        const dateStartRegex = /^\s*\d{1,2}\/\d{1,2}\/\d{2,4}/;
-        rawLines.forEach((line) => {
-          if (dateStartRegex.test(line)) {
-            if (currentLine !== "") {
-              mergedLines.push(currentLine);
-            }
-            currentLine = line.trim();
-          } else {
-            currentLine += " " + line.trim();
-          }
-        });
-        if (currentLine !== "") mergedLines.push(currentLine);
-        const messages = mergedLines
-          .map(parseLine)
-          .filter((msg) => msg !== null);
-        setAllMessages(messages);
-      })
-      .catch((error) => console.error("Error al leer el archivo:", error));
-  }, []);
 
   const generateNodes = useCallback(() => {
     if (!allMessages.length) return;
@@ -213,7 +255,6 @@ function App() {
       }
     }
 
-    // Seleccionamos sin wrapping para evitar repeticiones
     const selected = sortedMessages.slice(startIndex, startIndex + sampleSize);
     const centerX = window.innerWidth / 2;
     const centerY = window.innerHeight / 2;
@@ -222,7 +263,6 @@ function App() {
 
     if (drawingStyle === "heart") {
       if (heartMode === "line") {
-        // Modo "line": se posicionan los mensajes a lo largo del contorno
         const count = selected.length;
         newNodes = selected.map((msg, index) => {
           const t = (index / count) * 2 * Math.PI;
@@ -258,11 +298,6 @@ function App() {
           };
         });
       } else if (heartMode === "fill") {
-        // En modo "fill" queremos:
-        // 1. Colocar algunos mensajes sobre el contorno del corazón
-        // 2. Y luego distribuir el resto en el interior usando una malla (grid)
-
-        // 1. Calcular el contorno (polígono) del corazón
         const polygon = [];
         const samples = 100;
         for (let i = 0; i <= samples; i++) {
@@ -278,7 +313,6 @@ function App() {
           polygon.push({ x, y });
         }
 
-        // Calcular el bounding box del contorno
         let polyMinX = Infinity,
           polyMinY = Infinity,
           polyMaxX = -Infinity,
@@ -291,8 +325,6 @@ function App() {
         });
 
         const totalNodes = selected.length;
-
-        // Definir qué fracción de nodos se ubica en el contorno (por ejemplo, 30%)
         const outlineFraction = 0.3;
         const outlineCount = Math.min(
           totalNodes,
@@ -300,21 +332,17 @@ function App() {
         );
         const interiorCount = totalNodes - outlineCount;
 
-        // 2. Obtener posiciones a lo largo del contorno (outline)
         const outlinePositions = [];
         for (let i = 0; i < outlineCount; i++) {
-          // Muestreamos de forma equidistante a lo largo del array "polygon"
           const index = Math.floor((i / outlineCount) * polygon.length);
           outlinePositions.push(polygon[index]);
         }
 
-        // 3. Generar la malla (grid) para el interior usando el gridFactor del estado
         const R = Math.ceil(Math.sqrt(interiorCount) * gridFactor);
-        const C = R; // malla cuadrada
+        const C = R;
         const cellWidth = (polyMaxX - polyMinX) / C;
         const cellHeight = (polyMaxY - polyMinY) / R;
 
-        // Generar candidatos: centro de cada celda que esté dentro del polígono
         const candidatePoints = [];
         for (let i = 0; i < R; i++) {
           for (let j = 0; j < C; j++) {
@@ -326,12 +354,10 @@ function App() {
           }
         }
 
-        // Ordenar candidatos (de arriba hacia abajo y de izquierda a derecha)
         candidatePoints.sort((a, b) =>
           a.y === b.y ? a.x - b.x : a.y - b.y
         );
 
-        // Seleccionar de forma equidistante la cantidad necesaria de posiciones para el interior
         let gridPoints = [];
         if (candidatePoints.length >= interiorCount) {
           const step = candidatePoints.length / interiorCount;
@@ -345,10 +371,8 @@ function App() {
           }
         }
 
-        // 4. Combinar las posiciones: primero las del contorno y luego las del interior
         const finalPositions = outlinePositions.concat(gridPoints);
 
-        // 5. Asignar cada mensaje a una posición de finalPositions
         newNodes = selected.map((msg, index) => {
           const formattedMessage = formatMessage(msg.message, 80);
           const lines = formattedMessage.split("\n");
@@ -377,7 +401,6 @@ function App() {
           };
         });
       }
-      // Conectar los nodos secuencialmente
       for (let i = 0; i < newNodes.length - 1; i++) {
         newEdges.push({
           id: `e${i}-${i + 1}`,
@@ -428,7 +451,16 @@ function App() {
     }
     setNodes(newNodes);
     setEdges(newEdges);
-  }, [allMessages, startIndex, sampleSize, scale, drawingStyle, orderType, heartMode, gridFactor]);
+  }, [
+    allMessages,
+    startIndex,
+    sampleSize,
+    scale,
+    drawingStyle,
+    orderType,
+    heartMode,
+    gridFactor,
+  ]);
 
   useEffect(() => {
     generateNodes();
@@ -481,10 +513,6 @@ function App() {
     border: "1px solid #ccc",
   };
 
-  function filter(node) {
-    return node.tagName !== "I";
-  }
-
   async function exportDiagramSVGAndPNG() {
     try {
       setExporting(true);
@@ -510,18 +538,15 @@ function App() {
         setExporting(false);
         return;
       }
-      // Clonamos el contenedor
       const clone = element.cloneNode(true);
       clone.style.overflow = "visible";
       clone.style.position = "absolute";
       clone.style.top = "0px";
       clone.style.left = "0px";
-      // Forzamos el tamaño del clon al tamaño total del contenido (scrollWidth/scrollHeight)
       clone.style.width = `${element.scrollWidth}px`;
       clone.style.height = `${element.scrollHeight}px`;
       document.body.appendChild(clone);
 
-      // CALCULAR EL BOUNDING BOX A PARTIR DE LOS NODOS (ya que ReactFlow puede virtualizar)
       let bb = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
       nodes.forEach((node) => {
         const { x, y } = node.position;
@@ -542,11 +567,9 @@ function App() {
       const scaledWidth = clipWidth * scaleFactor;
       const scaledHeight = clipHeight * scaleFactor;
 
-      // Ajustar el tamaño del clon según el área calculada
       clone.style.width = `${scaledWidth}px`;
       clone.style.height = `${scaledHeight}px`;
 
-      // Reposicionar el viewport interno para centrar el diagrama
       const viewport = clone.querySelector(".react-flow__viewport");
       if (viewport) {
         viewport.style.transform = `translate(${-bb.minX * scaleFactor + margin * scaleFactor}px, ${
@@ -554,14 +577,12 @@ function App() {
         }px) scale(${scaleFactor})`;
       }
 
-      // Exportar a SVG
       const svgContent = await htmlToImage.toSvg(clone, {
         filter: (node) => node.tagName !== "I",
         width: scaledWidth,
         height: scaledHeight,
       });
       const svgDataUrl = svgContent;
-      // Exportar a PNG
       const pngDataUrl = await htmlToImage.toPng(clone, {
         filter: (node) => node.tagName !== "I",
         width: scaledWidth,
@@ -570,7 +591,6 @@ function App() {
       });
       document.body.removeChild(clone);
 
-      // Forzar descarga de archivos
       const svgLink = document.createElement("a");
       svgLink.download = "diagrama.svg";
       svgLink.href = svgDataUrl;
@@ -586,8 +606,183 @@ function App() {
     }
   }
 
+  // Filtrado en tiempo real de los mensajes del modal
+  const filteredModalMessages = modalMessages.filter((msg) => {
+    if (!filterText.trim()) return true;
+    const search = filterText.toLowerCase();
+    return (
+      msg.message.toLowerCase().includes(search) ||
+      msg.sender.toLowerCase().includes(search) ||
+      msg.date.toLowerCase().includes(search) ||
+      msg.time.toLowerCase().includes(search)
+    );
+  });
+
+  // Al confirmar en el modal, se carga el fichero filtrado en el diagrama
+  const confirmModalUpload = () => {
+    setAllMessages(filteredModalMessages);
+    setShowUploadModal(false);
+    setFilterText("");
+    setModalMessages([]);
+  };
+
   return (
     <div style={{ position: "relative" }}>
+      {/* Botón para abrir el modal de carga (esquina superior izquierda) */}
+      <button
+        onClick={() => setShowUploadModal(true)}
+        style={{
+          position: "absolute",
+          top: "20px",
+          left: "20px",
+          zIndex: 1000,
+          padding: "5px 10px",
+          border: "1px solid #ccc",
+          borderRadius: "4px",
+          cursor: "pointer",
+        }}
+      >
+        Subir archivo personalizado
+      </button>
+
+      {/* Botón para exportar (esquina superior derecha) */}
+      <button
+        onClick={exportDiagramSVGAndPNG}
+        style={{
+          position: "absolute",
+          top: "20px",
+          left: "300px",
+          zIndex: 1000,
+          padding: "5px 10px",
+          border: "1px solid #ccc",
+          borderRadius: "4px",
+          cursor: "pointer",
+        }}
+      >
+        Exportar Diagrama a SVG y PNG (Descargar)
+      </button>
+
+      {/* Modal de carga de fichero y filtrado */}
+      {showUploadModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.6)",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            zIndex: 2000,
+          }}
+        >
+          <div
+            style={{
+              padding: "20px",
+              borderRadius: "8px",
+              width: "90%",
+              maxWidth: "600px",
+              maxHeight: "90vh",
+              overflowY: "auto",
+            }}
+          >
+            <h2>Subir y filtrar archivo</h2>
+            {/* Input para elegir el fichero */}
+            <input type="file" accept=".txt" onChange={handleModalFileUpload} />
+            {/* Input para filtrar */}
+            {modalMessages.length > 0 && (
+              <>
+                <div style={{ marginTop: "15px" }}>
+                  <label style={{ fontWeight: "bold" }}>Filtrar mensajes:</label>
+                  <input
+                    type="text"
+                    value={filterText}
+                    onChange={(e) => setFilterText(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "5px",
+                      marginTop: "5px",
+                      borderRadius: "4px",
+                      border: "1px solid #ccc",
+                    }}
+                  />
+                </div>
+                {/* Previsualización de las líneas filtradas */}
+                <div
+                  style={{
+                    marginTop: "15px",
+                    padding: "10px",
+                    border: "1px solid #ccc",
+                    borderRadius: "4px",
+                    maxHeight: "300px",
+                    overflowY: "auto",
+                  }}
+                >
+                  {filteredModalMessages.map((msg, index) => (
+                    <div
+                      key={index}
+                      style={{
+                        padding: "5px 0",
+                        borderBottom: "1px solid #eee",
+                      }}
+                    >
+                      <strong>{msg.date} - {msg.time}</strong> -{" "}
+                      <span style={{ color: msg.sender.toLowerCase().includes("andrea") ? "#FF69B4" : "#1E90FF" }}>
+                        {msg.sender}
+                      </span>: {msg.message}
+                    </div>
+                  ))}
+                  {filteredModalMessages.length === 0 && (
+                    <p style={{ fontStyle: "italic", color: "#777" }}>No hay mensajes que cumplan el filtro.</p>
+                  )}
+                </div>
+              </>
+            )}
+            {/* Botones de acción */}
+            <div
+              style={{
+                marginTop: "20px",
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "10px",
+              }}
+            >
+              <button
+                onClick={() => {
+                  setShowUploadModal(false);
+                  setFilterText("");
+                  setModalMessages([]);
+                }}
+                style={{
+                  padding: "5px 10px",
+                  border: "1px solid #ccc",
+                  borderRadius: "4px",
+                  background: "#f0f0f0",
+                  cursor: "pointer",
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmModalUpload}
+                style={{
+                  padding: "5px 10px",
+                  border: "1px solid #ccc",
+                  borderRadius: "4px",
+                  background: "#d0f0d0",
+                  cursor: "pointer",
+                }}
+                disabled={modalMessages.length === 0}
+              >
+                Aceptar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Overlay de exportación */}
       {exporting && (
         <div
@@ -602,13 +797,14 @@ function App() {
             display: "flex",
             justifyContent: "center",
             alignItems: "center",
-            zIndex: 2000,
+            zIndex: 3000,
             fontSize: "24px",
           }}
         >
           Generando amor...
         </div>
       )}
+
       {/* Panel de controles */}
       <div style={controlsStyle}>
         <div>
@@ -699,12 +895,6 @@ function App() {
           </div>
         )}
       </div>
-      <button
-        onClick={exportDiagramSVGAndPNG}
-        style={{ position: "absolute", zIndex: 999 }}
-      >
-        Exportar Diagrama a SVG y PNG (Descargar)
-      </button>
       <div
         className="reactflow-wrapper react-flow-exporting"
         ref={reactFlowWrapper}
