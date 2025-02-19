@@ -718,7 +718,6 @@ function App() {
           connectionLineType={ConnectionLineType.SmoothStep}
         >
           <Controls />
-          <Background gap={16} />
         </ReactFlow>
       </div>
     </div>
